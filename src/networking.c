@@ -2127,6 +2127,7 @@ void readQueryFromClient(connection *conn) {
 
     /* Check if we want to read from the client later when exiting from
      * the event loop. This is the case if threaded I/O is enabled. */
+     // 从事件循环中退出时，检查我们是否稍后要从客户端读取内容。如果启用了线程I / O，就是这种情况。
     if (postponeClientRead(c)) return;
 
     /* Update total number of reads on server */
@@ -3458,6 +3459,7 @@ void *IOThreadMain(void *myid) {
             }
         }
         listEmpty(io_threads_list[id]);
+        // 执行完毕，设置状态
         setIOPendingCount(id, 0);
 
         if (tio_debug) printf("[%ld] Done\n", id);
@@ -3497,7 +3499,7 @@ void initThreadedIO(void) {
         setIOPendingCount(i, 0);
         // 初始化后将线程暂时锁住
         pthread_mutex_lock(&io_threads_mutex[i]); /* Thread will be stopped. */
-        // 线程创建，绑定IOThreadMain函数
+        // 线程创建，绑定"IOThreadMain"函数
         if (pthread_create(&tid,NULL,IOThreadMain,(void*)(long)i) != 0) {
             serverLog(LL_WARNING,"Fatal: Can't initialize IO thread.");
             exit(1);
