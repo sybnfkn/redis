@@ -3177,6 +3177,7 @@ void initServer(void) {
 
     /* Create an event handler for accepting new connections in TCP and Unix
      * domain sockets. */
+     // 创建一个事件处理器，绑定给用于处理连接的scoket
     for (j = 0; j < server.ipfd_count; j++) {
         if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE,
             acceptTcpHandler,NULL) == AE_ERR)
@@ -3208,6 +3209,7 @@ void initServer(void) {
 
     /* Register before and after sleep handlers (note this needs to be done
      * before loading persistence since it is used by processEventsWhileBlocked. */
+     // 运行事件处理器，一直到服务器关闭为止
     aeSetBeforeSleepProc(server.el,beforeSleep);
     aeSetAfterSleepProc(server.el,afterSleep);
 
@@ -5707,6 +5709,8 @@ int iAmMaster(void) {
             (server.cluster_enabled && nodeIsMaster(server.cluster->myself)));
 }
 
+
+// 启动啦
 int main(int argc, char **argv) {
     struct timeval tv;
     int j;
@@ -5757,6 +5761,7 @@ int main(int argc, char **argv) {
     getRandomBytes(hashseed,sizeof(hashseed));
     dictSetHashFunctionSeed(hashseed);
     server.sentinel_mode = checkForSentinelMode(argc,argv);
+    // 初始化服务器
     initServerConfig();
     ACLInit(); /* The ACL subsystem must be initialized ASAP because the
                   basic networking code and client creation depends on it. */
@@ -5868,6 +5873,7 @@ int main(int argc, char **argv) {
     }
 
     readOOMScoreAdj();
+    // 创建并初始化服务器数据结构
     initServer();
     if (background || server.pidfile) createPidFile();
     redisSetProcTitle(argv[0]);
@@ -5932,6 +5938,7 @@ int main(int argc, char **argv) {
     redisSetCpuAffinity(server.server_cpulist);
     setOOMScoreAdj(-1);
 
+// Redis的网络监听没有采用libevent等，而是自己实现了一套简单的机遇event驱动的API，具体见ae.c。事件处理器的主循环
     aeMain(server.el);
     aeDeleteEventLoop(server.el);
     return 0;

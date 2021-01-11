@@ -108,21 +108,27 @@ static void clientSetDefaultAuth(client *c) {
 }
 
 client *createClient(connection *conn) {
+// 分配空间
     client *c = zmalloc(sizeof(client));
 
     /* passing NULL as conn it is possible to create a non connected client.
      * This is useful since all the commands needs to be executed
      * in the context of a client. When commands are executed in other
      * contexts (for instance a Lua script) we need a non connected client. */
+     // 设置scoket参数
     if (conn) {
+    // 非阻塞
         connNonBlock(conn);
+
         connEnableTcpNoDelay(conn);
         if (server.tcpkeepalive)
             connKeepAlive(conn,server.tcpkeepalive);
+        // 绑定读事件到事件 loop （开始接收命令请求）
         connSetReadHandler(conn, readQueryFromClient);
         connSetPrivateData(conn, c);
     }
 
+// 初始化其他数据
     selectDb(c,0);
     uint64_t client_id;
     atomicGetIncr(server.next_client_id, client_id, 1);
@@ -1058,6 +1064,7 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip) {
     }
 
     /* Create connection and client */
+    // 创建一个客户端（client *c;）
     if ((c = createClient(conn)) == NULL) {
         serverLog(LL_WARNING,
             "Error registering fd event for the new client: %s (conn: %s)",
@@ -1078,6 +1085,8 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip) {
      *
      * Because of that, we must do nothing else afterwards.
      */
+     // 如果新添加的客户端令服务器的最大客户端数量达到了，那么向新客户端写入错误信息，并关闭新客户端
+          // 先创建客户端，再进行数量检查是为了方便地进行错误信息写入
     if (connAccept(conn, clientAcceptHandler) == C_ERR) {
         char conninfo[100];
         if (connGetState(conn) == CONN_STATE_ERROR)
@@ -1097,6 +1106,7 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     UNUSED(privdata);
 
     while(max--) {
+    // accept 客户端连接
         cfd = anetTcpAccept(server.neterr, fd, cip, sizeof(cip), &cport);
         if (cfd == ANET_ERR) {
             if (errno != EWOULDBLOCK)
@@ -1105,6 +1115,7 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
             return;
         }
         serverLog(LL_VERBOSE,"Accepted %s:%d", cip, cport);
+        // 为客户端创建客户状态
         acceptCommonHandler(connCreateAcceptedSocket(cfd),0,cip);
     }
 }
@@ -1993,6 +2004,7 @@ void commandProcessed(client *c) {
 int processCommandAndResetClient(client *c) {
     int deadclient = 0;
     server.current_client = c;
+    // 处理命令
     if (processCommand(c) == C_OK) {
         commandProcessed(c);
     }
@@ -2022,8 +2034,10 @@ int processPendingCommandsAndResetClient(client *c) {
  * more query buffer to process, because we read more data from the socket
  * or because a client was blocked and later reactivated, so there could be
  * pending query buffer, already representing a full command, to process. */
+ // 处理客户端输入的命令内容
 void processInputBuffer(client *c) {
     /* Keep processing while there is something in the input buffer */
+    // 尽可能地处理查询缓冲区中的内容
     while(c->qb_pos < sdslen(c->querybuf)) {
         /* Immediately abort if the client is in the middle of something. */
         if (c->flags & CLIENT_BLOCKED) break;
@@ -2054,7 +2068,9 @@ void processInputBuffer(client *c) {
             }
         }
 
+// // 将缓冲区中的内容转换成命令，以及命令参数
         if (c->reqtype == PROTO_REQ_INLINE) {
+
             if (processInlineBuffer(c) != C_OK) break;
             /* If the Gopher mode and we got zero or one argument, process
              * the request in Gopher mode. To avoid data race, Redis won't
@@ -2087,6 +2103,7 @@ void processInputBuffer(client *c) {
             }
 
             /* We are finally ready to execute the command. */
+            // 终于要去执行命令了
             if (processCommandAndResetClient(c) == C_ERR) {
                 /* If the client is no longer valid, we avoid exiting this
                  * loop and trimming the client buffer later. So we return
@@ -2132,9 +2149,15 @@ void readQueryFromClient(connection *conn) {
         if (remaining > 0 && remaining < readlen) readlen = remaining;
     }
 
+// 获取查询缓冲区当前内容的长度
+     // 如果读取出现 short read ，那么可能会有内容滞留在读取缓冲区里面
+     // 这些滞留内容也许不能完整构成一个符合协议的命令，
     qblen = sdslen(c->querybuf);
+    // 如果有需要，更新缓冲区内容长度的峰值（peak）
     if (c->querybuf_peak < qblen) c->querybuf_peak = qblen;
+    // 为查询缓冲区分配空间
     c->querybuf = sdsMakeRoomFor(c->querybuf, readlen);
+    // 读入内容到查询缓存
     nread = connRead(c->conn, c->querybuf+qblen, readlen);
     if (nread == -1) {
         if (connGetState(conn) == CONN_STATE_CONNECTED) {
@@ -2152,6 +2175,8 @@ void readQueryFromClient(connection *conn) {
         /* Append the query buffer to the pending (not applied) buffer
          * of the master. We'll use this buffer later in order to have a
          * copy of the string applied by the last command executed. */
+         // 将查询缓冲区追加到主服务器的暂挂（未应用）缓冲区*。
+         // 稍后我们将使用此缓冲区，以使最后执行的命令应用的字符串副本
         c->pending_querybuf = sdscatlen(c->pending_querybuf,
                                         c->querybuf+qblen,nread);
     }
@@ -2173,6 +2198,10 @@ void readQueryFromClient(connection *conn) {
 
     /* There is more data in the client input buffer, continue parsing it
      * in case to check if there is a full command to execute. */
+     // // 查询缓冲区长度超出服务器最大缓冲区长度
+             // 清空缓冲区并释放客户端
+             // 从查询缓存重读取内容，创建参数，并执行命令
+             // 函数会执行到缓存中的所有内容都被处理完为止
      processInputBuffer(c);
 }
 
@@ -3369,6 +3398,7 @@ int io_threads_op;      /* IO_THREADS_OP_WRITE or IO_THREADS_OP_READ. */
 /* This is the list of clients each thread will serve when threaded I/O is
  * used. We spawn io_threads_num-1 threads, since one is the main thread
  * itself. */
+ // 每个线程服务的客户端列表
 list *io_threads_list[IO_THREADS_MAX_NUM];
 
 static inline unsigned long getIOPendingCount(int i) {
@@ -3394,6 +3424,7 @@ void *IOThreadMain(void *myid) {
 
     while(1) {
         /* Wait for start */
+        // 阻塞等待开始
         for (int j = 0; j < 1000000; j++) {
             if (getIOPendingCount(id) != 0) break;
         }
@@ -3657,7 +3688,8 @@ int postponeClientRead(client *c) {
  * the queue using the I/O threads, and process them in order to accumulate
  * the reads in the buffers, and also parse the first command available
  * rendering it in the client structures. */
- // 如何分配 client 给 thread
+ // 使用线程处理等待读取的线程
+ // *********** 如何分配 client 给 thread
 int handleClientsWithPendingReadsUsingThreads(void) {
     if (!server.io_threads_active || !server.io_threads_do_reads) return 0;
     //Redis 检查有多少等待读的 client

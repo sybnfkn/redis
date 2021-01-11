@@ -392,6 +392,8 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 
         /* Call the multiplexing API, will return only on timeout or when
          * some event fires. */
+         // // 处理文件事件，阻塞时间由 tvp 决定
+            	// 类似于 java nio 中的select ，阻塞获取就绪的socket一样
         numevents = aeApiPoll(eventLoop, tvp);
 
         /* After sleep callback. */
@@ -399,6 +401,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             eventLoop->aftersleep(eventLoop);
 
         for (j = 0; j < numevents; j++) {
+        // 从已就绪数组中获取事件
             aeFileEvent *fe = &eventLoop->events[eventLoop->fired[j].fd];
             int mask = eventLoop->fired[j].mask;
             int fd = eventLoop->fired[j].fd;
@@ -423,6 +426,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
              *
              * Fire the readable event if the call sequence is not
              * inverted. */
+             // 读事件
             if (!invert && fe->mask & mask & AE_READABLE) {
                 fe->rfileProc(eventLoop,fd,fe->clientData,mask);
                 fired++;
@@ -430,6 +434,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             }
 
             /* Fire the writable event. */
+            // 写事件
             if (fe->mask & mask & AE_WRITABLE) {
                 if (!fired || fe->wfileProc != fe->rfileProc) {
                     fe->wfileProc(eventLoop,fd,fe->clientData,mask);
@@ -453,6 +458,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         }
     }
     /* Check time events */
+    // 执行时间事件
     if (flags & AE_TIME_EVENTS)
         processed += processTimeEvents(eventLoop);
 
@@ -484,6 +490,7 @@ int aeWait(int fd, int mask, long long milliseconds) {
 void aeMain(aeEventLoop *eventLoop) {
     eventLoop->stop = 0;
     while (!eventLoop->stop) {
+    // 开始处理
         aeProcessEvents(eventLoop, AE_ALL_EVENTS|
                                    AE_CALL_BEFORE_SLEEP|
                                    AE_CALL_AFTER_SLEEP);
