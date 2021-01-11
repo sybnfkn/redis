@@ -3417,8 +3417,10 @@ void *IOThreadMain(void *myid) {
         while((ln = listNext(&li))) {
             client *c = listNodeValue(ln);
             if (io_threads_op == IO_THREADS_OP_WRITE) {
+                // 当前全局处于写事件时，向输出缓冲区写入响应内容
                 writeToClient(c,0);
             } else if (io_threads_op == IO_THREADS_OP_READ) {
+                // 当前全局处于读事件时，从输入缓冲区读取请求内容
                 readQueryFromClient(c->conn);
             } else {
                 serverPanic("io_threads_op value is unknown");
@@ -3432,11 +3434,13 @@ void *IOThreadMain(void *myid) {
 }
 
 /* Initialize the data structures needed for threaded I/O. */
+// 初始化threaded io必须的数据结构
 void initThreadedIO(void) {
     server.io_threads_active = 0; /* We start with threads not active. */
 
     /* Don't spawn any thread if the user selected a single thread:
      * we'll handle I/O directly from the main thread. */
+     // 如果用户没有开启多线程 IO 直接返回 使用主线程处理
     if (server.io_threads_num == 1) return;
 
     if (server.io_threads_num > IO_THREADS_MAX_NUM) {
@@ -3446,20 +3450,28 @@ void initThreadedIO(void) {
     }
 
     /* Spawn and initialize the I/O threads. */
+    // 生成并初始化IO线程
     for (int i = 0; i < server.io_threads_num; i++) {
         /* Things we do for all the threads including the main thread. */
         io_threads_list[i] = listCreate();
+        // 祝线程直接退出
         if (i == 0) continue; /* Thread 0 is the main thread. */
 
         /* Things we do only for the additional threads. */
+        // 初始化 io_threads_num 个对应线程
         pthread_t tid;
+        // 为线程初始化对应的锁
         pthread_mutex_init(&io_threads_mutex[i],NULL);
+        // 线程等待状态初始化为 0
         setIOPendingCount(i, 0);
+        // 初始化后将线程暂时锁住
         pthread_mutex_lock(&io_threads_mutex[i]); /* Thread will be stopped. */
+        // 线程创建，绑定IOThreadMain函数
         if (pthread_create(&tid,NULL,IOThreadMain,(void*)(long)i) != 0) {
             serverLog(LL_WARNING,"Fatal: Can't initialize IO thread.");
             exit(1);
         }
+        // 将 index 和对应线程 ID 加以映射
         io_threads[i] = tid;
     }
 }
@@ -3481,18 +3493,27 @@ void killIOThreads(void) {
     }
 }
 
+/**
+在上面的过程中，当任务分发完毕后，每个线程按照正常流程将自己负责的 Client 的读取缓冲区的内容进行处理，和原来的单线程没有太大差异。
+
+每轮处理中，需要将各个线程的锁开启，并且将相关标志置位：
+*/
+// 吧所有线程启动起来了
 void startThreadedIO(void) {
     if (tio_debug) { printf("S"); fflush(stdout); }
     if (tio_debug) printf("--- STARTING THREADED IO ---\n");
     serverAssert(server.io_threads_active == 0);
     for (int j = 1; j < server.io_threads_num; j++)
+    // // 解开线程的锁定状态，开始启动了
         pthread_mutex_unlock(&io_threads_mutex[j]);
+        // 现在可以开始多线程 IO 执行对应读 /写任务
     server.io_threads_active = 1;
 }
 
 void stopThreadedIO(void) {
     /* We may have still clients with pending reads when this function
      * is called: handle them before stopping the threads. */
+     // 需要停止的时候可能还有等待读的 Client 在停止前进行处理
     handleClientsWithPendingReadsUsingThreads();
     if (tio_debug) { printf("E"); fflush(stdout); }
     if (tio_debug) printf("--- STOPPING THREADED IO [R%d] [W%d] ---\n",
@@ -3500,7 +3521,9 @@ void stopThreadedIO(void) {
         (int) listLength(server.clients_pending_write));
     serverAssert(server.io_threads_active == 1);
     for (int j = 1; j < server.io_threads_num; j++)
+    // 本轮 IO 结束 将所有线程上锁
         pthread_mutex_lock(&io_threads_mutex[j]);
+     // IO 状态设置为关闭
     server.io_threads_active = 0;
 }
 
@@ -3634,8 +3657,10 @@ int postponeClientRead(client *c) {
  * the queue using the I/O threads, and process them in order to accumulate
  * the reads in the buffers, and also parse the first command available
  * rendering it in the client structures. */
+ // 如何分配 client 给 thread
 int handleClientsWithPendingReadsUsingThreads(void) {
     if (!server.io_threads_active || !server.io_threads_do_reads) return 0;
+    //Redis 检查有多少等待读的 client
     int processed = listLength(server.clients_pending_read);
     if (processed == 0) return 0;
 
@@ -3645,6 +3670,7 @@ int handleClientsWithPendingReadsUsingThreads(void) {
     listIter li;
     listNode *ln;
     listRewind(server.clients_pending_read,&li);
+    // 如果长度不为 0，进行 While 循环，将每个等待的 client 分配给线程，当等待长度超过线程数时，每个线程分配到的 client 可能会超过 1 个：
     int item_id = 0;
     while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
@@ -3655,7 +3681,9 @@ int handleClientsWithPendingReadsUsingThreads(void) {
 
     /* Give the start condition to the waiting threads, by setting the
      * start condition atomic var. */
+     // 开始处理读吧
     io_threads_op = IO_THREADS_OP_READ;
+    // 并且修改每个线程需要完成的数量（初始化时为 0 ）
     for (int j = 1; j < server.io_threads_num; j++) {
         int count = listLength(io_threads_list[j]);
         setIOPendingCount(j, count);
@@ -3670,6 +3698,7 @@ int handleClientsWithPendingReadsUsingThreads(void) {
     listEmpty(io_threads_list[0]);
 
     /* Wait for all the other threads to end their work. */
+    // 等待处理直到没有剩余任务：
     while(1) {
         unsigned long pending = 0;
         for (int j = 1; j < server.io_threads_num; j++)
@@ -3679,6 +3708,7 @@ int handleClientsWithPendingReadsUsingThreads(void) {
     if (tio_debug) printf("I/O READ All threads finshed\n");
 
     /* Run the list of clients again to process the new buffers. */
+    // 再次运行客户端列表以处理新缓冲区。
     while(listLength(server.clients_pending_read)) {
         ln = listFirst(server.clients_pending_read);
         client *c = listNodeValue(ln);

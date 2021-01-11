@@ -3044,6 +3044,7 @@ void initServer(void) {
     server.slaves = listCreate();
     server.monitors = listCreate();
     server.clients_pending_write = listCreate();
+    // 创建一个等待read的队列
     server.clients_pending_read = listCreate();
     server.clients_timeout_table = raxNew();
     server.slaveseldb = -1; /* Force to emit the first SELECT command. */
@@ -3245,6 +3246,7 @@ void initServer(void) {
  * see: https://sourceware.org/bugzilla/show_bug.cgi?id=19329 */
 void InitServerLast() {
     bioInit();
+    // 初始化线程
     initThreadedIO();
     set_jemalloc_bg_thread(server.jemalloc_bg_thread);
     server.initial_memory_usage = zmalloc_used_memory();
