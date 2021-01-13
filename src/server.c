@@ -3213,8 +3213,8 @@ void initServer(void) {
                 "blocked clients subsystem.");
     }
 
-    /* Register before and after sleep handlers (note this needs to be done
-     * before loading persistence since it is used by processEventsWhileBlocked. */
+    /* register before and after sleep handlers (note this needs to be done
+     * before loading persistence since it is used by processeventswhileblocked. */
      // 运行事件处理器，一直到服务器关闭为止
      // 注册 beforeSleep函数，直到eventloop睡眠前执行
     aeSetBeforeSleepProc(server.el,beforeSleep);

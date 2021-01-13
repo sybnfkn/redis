@@ -2129,6 +2129,7 @@ void readQueryFromClient(connection *conn) {
     /* Check if we want to read from the client later when exiting from
      * the event loop. This is the case if threaded I/O is enabled. */
      // 从事件循环中退出时，检查我们是否稍后要从客户端读取内容。如果启用了线程I / O，就是这种情况。
+     // 推迟客户端读
     if (postponeClientRead(c)) return;
 
     /* Update total number of reads on server */
@@ -2151,7 +2152,7 @@ void readQueryFromClient(connection *conn) {
         if (remaining > 0 && remaining < readlen) readlen = remaining;
     }
 
-// 获取查询缓冲区当前内容的长度
+    // 获取查询缓冲区当前内容的长度
      // 如果读取出现 short read ，那么可能会有内容滞留在读取缓冲区里面
      // 这些滞留内容也许不能完整构成一个符合协议的命令，
     qblen = sdslen(c->querybuf);
@@ -3682,14 +3683,19 @@ int handleClientsWithPendingWritesUsingThreads(void) {
  * This is called by the readable handler of the event loop.
  * As a side effect of calling this function the client is put in the
  * pending read clients and flagged as such. */
+ // 如果我们要处理稍后使用线程I/O读取的客户端，则返回1。
+ // 这由事件循环的可读处理程序调用。（初始化过程中 networking.c#initThreadedIO 创建了多线程用于处理IO）
+ // 此函数作用就是--->将客户端被放入待处理的已读客户端中，并被标记为此类
 int postponeClientRead(client *c) {
-    if (server.io_threads_active &&
+    if (server.io_threads_active /*多线程处理io开关开始*/&&
         server.io_threads_do_reads &&
         !ProcessingEventsWhileBlocked &&
         !(c->flags & (CLIENT_MASTER|CLIENT_SLAVE|CLIENT_PENDING_READ)))
     {
+        // 客户端标记：等待读
         c->flags |= CLIENT_PENDING_READ;
         listAddNodeHead(server.clients_pending_read,c);
+        // 推迟客户端读
         return 1;
     } else {
         return 0;
