@@ -2306,6 +2306,10 @@ extern int ProcessingEventsWhileBlocked;
  *
  * The most important is freeClientsInAsyncFreeQueue but we also
  * call some other low-risk functions. */
+ // 每当Redis进入事件驱动库的主循环时（即在休眠之前获取就绪文件描述符），都会调用此函数。
+  // * *注意：（当前）从两个函数调用此函数：* 1. aeMain-主服务器循环* 2. processEventsWhileBlocked-在RDB / AOF加载期间处理客户端* *
+  // 如果从processEventsWhileBlocked调用，我们不希望*来执行所有操作（例如，我们不想使*键过期），但是我们确实需要执行一些操作。
+   // * *最重要的是freeClientsInAsyncFreeQueue，但我们也*调用了其他一些低风险函数。
 void beforeSleep(struct aeEventLoop *eventLoop) {
     UNUSED(eventLoop);
 
@@ -2332,6 +2336,7 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
     handleBlockedClientsTimeout();
 
     /* We should handle pending reads clients ASAP after event loop. */
+    // 事件循环后，我们应该尽快处理未决的读取客户端
     handleClientsWithPendingReadsUsingThreads();
 
     /* Handle TLS pending data. (must be done before flushAppendOnlyFile) */
@@ -3211,6 +3216,7 @@ void initServer(void) {
     /* Register before and after sleep handlers (note this needs to be done
      * before loading persistence since it is used by processEventsWhileBlocked. */
      // 运行事件处理器，一直到服务器关闭为止
+     // 注册 beforeSleep函数，直到eventloop睡眠前执行
     aeSetBeforeSleepProc(server.el,beforeSleep);
     aeSetAfterSleepProc(server.el,afterSleep);
 
@@ -5711,7 +5717,7 @@ int iAmMaster(void) {
 }
 
 
-// 启动啦
+// 启动函数
 int main(int argc, char **argv) {
     struct timeval tv;
     int j;
@@ -5875,6 +5881,9 @@ int main(int argc, char **argv) {
 
     readOOMScoreAdj();
     // 创建并初始化服务器数据结构
+    // 1。绑定端口
+    // 2。绑定serversocket的accept处理函数acceptTcpHandler
+    // 3。aeSetBeforeSleepProc
     initServer();
     if (background || server.pidfile) createPidFile();
     redisSetProcTitle(argv[0]);
@@ -5900,6 +5909,7 @@ int main(int argc, char **argv) {
         moduleLoadFromQueue();
         ACLLoadUsersAtStartup();
         // 创建thread io
+        // 线程创建，绑定"IOThreadMain"函数
         InitServerLast();
         loadDataFromDisk();
         if (server.cluster_enabled) {

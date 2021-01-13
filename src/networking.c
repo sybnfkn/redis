@@ -1606,6 +1606,7 @@ int handleClientsWithPendingWrites(void) {
         if (c->flags & CLIENT_CLOSE_ASAP) continue;
 
         /* Try to write buffers to the client socket. */
+        // 尝试向socket中去写
         if (writeToClient(c,0) == C_ERR) continue;
 
         /* If after the synchronous writes above we still have data to
@@ -3487,7 +3488,7 @@ void initThreadedIO(void) {
     for (int i = 0; i < server.io_threads_num; i++) {
         /* Things we do for all the threads including the main thread. */
         io_threads_list[i] = listCreate();
-        // 祝线程直接退出
+        // 主线程直接退出
         if (i == 0) continue; /* Thread 0 is the main thread. */
 
         /* Things we do only for the additional threads. */
@@ -3584,11 +3585,13 @@ int stopThreadedIOIfNeeded(void) {
 }
 
 int handleClientsWithPendingWritesUsingThreads(void) {
+    // 多少个客户端"待写回"
     int processed = listLength(server.clients_pending_write);
     if (processed == 0) return 0; /* Return ASAP if there are no clients. */
 
     /* If I/O threads are disabled or we have few clients to serve, don't
      * use I/O threads, but thejboring synchronous code. */
+     // 使用主线程 进行写回
     if (server.io_threads_num == 1 || stopThreadedIOIfNeeded()) {
         return handleClientsWithPendingWrites();
     }
@@ -3603,6 +3606,7 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     listNode *ln;
     listRewind(server.clients_pending_write,&li);
     int item_id = 0;
+    // 如果长度不为 0，进行 While 循环，将每个等待的 client 分配给线程，当等待长度超过线程数时，每个线程分配到的 client 可能会超过 1 个
     while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
         c->flags &= ~CLIENT_PENDING_WRITE;
@@ -3615,12 +3619,14 @@ int handleClientsWithPendingWritesUsingThreads(void) {
         }
 
         int target_id = item_id % server.io_threads_num;
+        // 这里
         listAddNodeTail(io_threads_list[target_id],c);
         item_id++;
     }
 
     /* Give the start condition to the waiting threads, by setting the
      * start condition atomic var. */
+     // 通过设置*开始条件atomic var，为开始的线程赋予开始条件
     io_threads_op = IO_THREADS_OP_WRITE;
     for (int j = 1; j < server.io_threads_num; j++) {
         int count = listLength(io_threads_list[j]);
@@ -3628,14 +3634,17 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     }
 
     /* Also use the main thread to process a slice of clients. */
+    // 还使用主线程来处理一部分client
     listRewind(io_threads_list[0],&li);
     while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
+        // 写回客户端
         writeToClient(c,0);
     }
     listEmpty(io_threads_list[0]);
 
     /* Wait for all the other threads to end their work. */
+    // 等待其他所有线程结束工作
     while(1) {
         unsigned long pending = 0;
         for (int j = 1; j < server.io_threads_num; j++)
@@ -3646,18 +3655,21 @@ int handleClientsWithPendingWritesUsingThreads(void) {
 
     /* Run the list of clients again to install the write handler where
      * needed. */
+     // 再次运行客户端列表以在需要的地方安装写处理程序。
     listRewind(server.clients_pending_write,&li);
     while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
 
         /* Install the write handler if there are pending writes in some
          * of the clients. */
+         // 如果没有写完，再次绑定sendReplyToClient
         if (clientHasPendingReplies(c) &&
                 connSetWriteHandler(c->conn, sendReplyToClient) == AE_ERR)
         {
             freeClientAsync(c);
         }
     }
+    // 清空 clients_pending_write
     listEmpty(server.clients_pending_write);
 
     /* Update processed count on server */
@@ -3715,7 +3727,7 @@ int handleClientsWithPendingReadsUsingThreads(void) {
 
     /* Give the start condition to the waiting threads, by setting the
      * start condition atomic var. */
-     // 开始处理读吧
+     // ******************************开始处理读吧
     io_threads_op = IO_THREADS_OP_READ;
     // 并且修改每个线程需要完成的数量（初始化时为 0 ）
     for (int j = 1; j < server.io_threads_num; j++) {
@@ -3743,12 +3755,14 @@ int handleClientsWithPendingReadsUsingThreads(void) {
 
     /* Run the list of clients again to process the new buffers. */
     // 再次运行客户端列表以处理新缓冲区。
+    // 单线程开始处理命令？？
     while(listLength(server.clients_pending_read)) {
         ln = listFirst(server.clients_pending_read);
         client *c = listNodeValue(ln);
         c->flags &= ~CLIENT_PENDING_READ;
         listDelNode(server.clients_pending_read,ln);
 
+        // 删除---》标记连接为 CLIENT_PENDING_COMMAND，IO线程只从socket中读取消息，并不执行命令
         if (processPendingCommandsAndResetClient(c) == C_ERR) {
             /* If the client is no longer valid, we avoid
              * processing the client later. So we just go
@@ -3761,7 +3775,10 @@ int handleClientsWithPendingReadsUsingThreads(void) {
         /* We may have pending replies if a thread readQueryFromClient() produced
          * replies and did not install a write handler (it can't).
          */
+         // 是否有东西要写回 socket
         if (!(c->flags & CLIENT_PENDING_WRITE) && clientHasPendingReplies(c))
+            // 重新绑定write
+            // 并放入 clients_pending_write
             clientInstallWriteHandler(c);
     }
 

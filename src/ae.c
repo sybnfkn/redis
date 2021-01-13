@@ -394,6 +394,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
          * some event fires. */
          // // 处理文件事件，阻塞时间由 tvp 决定
             	// 类似于 java nio 中的select ，阻塞获取就绪的socket一样
+            	// aeApiPoll 可看做文件事件的生产者
         numevents = aeApiPoll(eventLoop, tvp);
 
         /* After sleep callback. */
@@ -426,6 +427,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
              *
              * Fire the readable event if the call sequence is not
              * inverted. */
+             // Redis 中会处理两种事件：时间事件和文件事件。在每个事件循环中 Redis 都会先处理文件事件，然后再处理时间事件直到整个循环停止。
              // 读事件
             if (!invert && fe->mask & mask & AE_READABLE) {
                 fe->rfileProc(eventLoop,fd,fe->clientData,mask);
