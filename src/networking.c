@@ -221,6 +221,7 @@ void clientInstallWriteHandler(client *c) {
          * a system call. We'll only really install the write handler if
          * we'll not be able to write the whole reply at once. */
         c->flags |= CLIENT_PENDING_WRITE;
+        // 有东西要写，加入到clients_pending_write
         listAddNodeHead(server.clients_pending_write,c);
     }
 }
@@ -2005,7 +2006,7 @@ void commandProcessed(client *c) {
 int processCommandAndResetClient(client *c) {
     int deadclient = 0;
     server.current_client = c;
-    // 处理命令
+    // ***********处理命令
     if (processCommand(c) == C_OK) {
         commandProcessed(c);
     }
@@ -2021,6 +2022,7 @@ int processCommandAndResetClient(client *c) {
 /* This function will execute any fully parsed commands pending on
  * the client. Returns C_ERR if the client is no longer valid after executing
  * the command, and C_OK for all other cases. */
+ // 此函数将执行客户端上所有待处理的完全解析的命令。如果执行命令后客户端不再有效，则返回C_ERR；对于所有其他情况，返回C_OK。
 int processPendingCommandsAndResetClient(client *c) {
     if (c->flags & CLIENT_PENDING_COMMAND) {
         c->flags &= ~CLIENT_PENDING_COMMAND;
@@ -2035,6 +2037,7 @@ int processPendingCommandsAndResetClient(client *c) {
  * more query buffer to process, because we read more data from the socket
  * or because a client was blocked and later reactivated, so there could be
  * pending query buffer, already representing a full command, to process. */
+ // 每次在客户端结构'c'中调用此函数时，*需要处理更多的查询缓冲区，因为我们从套接字读取了更多数据*或因为客户端被阻止并随后被重新激活，所以可能存在*未决查询已代表完整命令的缓冲区进行处理
  // 处理客户端输入的命令内容
 void processInputBuffer(client *c) {
     /* Keep processing while there is something in the input buffer */
@@ -2045,6 +2048,7 @@ void processInputBuffer(client *c) {
 
         /* Don't process more buffers from clients that have already pending
          * commands to execute in c->argv. */
+         // 不要从已经具有待处理*命令的客户端处理更多缓冲区
         if (c->flags & CLIENT_PENDING_COMMAND) break;
 
         /* Don't process input from the master while there is a busy script
@@ -2098,7 +2102,9 @@ void processInputBuffer(client *c) {
             /* If we are in the context of an I/O thread, we can't really
              * execute the command here. All we can do is to flag the client
              * as one that needs to process the command. */
+             // 如果我们在I / O线程的上下文中，则我们实际上不能在此处执行命令。我们所能做的就是将客户端*标记为需要处理命令的客户端。
             if (c->flags & CLIENT_PENDING_READ) {
+                //
                 c->flags |= CLIENT_PENDING_COMMAND;
                 break;
             }
@@ -3766,6 +3772,7 @@ int handleClientsWithPendingReadsUsingThreads(void) {
         ln = listFirst(server.clients_pending_read);
         client *c = listNodeValue(ln);
         c->flags &= ~CLIENT_PENDING_READ;
+        // clients_pending_read中删除
         listDelNode(server.clients_pending_read,ln);
 
         // 删除---》标记连接为 CLIENT_PENDING_COMMAND，IO线程只从socket中读取消息，并不执行命令
